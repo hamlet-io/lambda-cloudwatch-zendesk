@@ -103,9 +103,12 @@ def lambda_handler(event, context):
     tag_alarm_name = alarm_name.lower()
     tag_alarm_name = re.sub("[^0-9a-zA-Z]+", "_", tag_alarm_name)
 
+    tag_alarm_region = region.lower()
+    tag_alarm_region = re.sub("[^0-9a-zA-Z]+", "_", tag_alarm_region)
+
     tags = [
         f"cw:name:{tag_alarm_name}",
-        f"cw:region:{region}",
+        f"cw:region:{tag_alarm_region}",
         f"cw:accountid:{accountId}",
     ]
 
