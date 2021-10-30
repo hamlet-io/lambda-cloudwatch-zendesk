@@ -1,0 +1,19 @@
+{
+  "name": "lambda-cloudwatch-zendesk",
+  "version": "1.0.0",
+  "description": "Serverless Packaging - Sends cloudwatch alerts through to zendesk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codeontap/lambda-cloudwatch-zendesk.git"
+  },
+  "author": "",
+  "license": "GPL-2.0",
+  "bugs": {
+    "url": "https://github.com/codeontap/lambda-cloudwatch-zendesk/issues"
+  },
+  "homepage": "https://github.com/codeontap/lambda-cloudwatch-zendesk#README",
+  "devDependencies": {
+    "serverless": "^2.43.0",
+    "serverless-python-requirements": "^5.1.1"
+  }
+}

@@ -1,0 +1,27 @@
+service: lambda-cloudwatch-zendesk
+
+plugins:
+  - serverless-python-requirements
+
+package:
+  individually: true
+  patterns:
+    - '!./**'
+    - './cloudwatch-zendesk/**'
+
+custom:
+  pythonRequirements:
+    dockerizePip: 'non-linux'
+    invalidateCaches: true
+    fileName: requirements.txt
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  region: ap-southeast-2
+  lambdaHashingVersion: 20201221
+
+functions:
+  cloudwatch-zendesk:
+    handler: cloudwatch-zendesk/lambda_function.lambda_handler
