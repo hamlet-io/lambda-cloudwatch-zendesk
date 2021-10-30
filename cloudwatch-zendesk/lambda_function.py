@@ -1,5 +1,3 @@
-
-
 import boto3
 import json
 import logging
@@ -19,27 +17,28 @@ ZENDESK_OAUTH_TOKEN = os.environ["ZENDESK_OAUTH_TOKEN"]
 
 ZENDESK_ALARM_NAME = os.environ["ZENDESK_ALARM_NAME"]
 
-ZENDESK_ORGANISATION = os.environ.get("ZENDESK_ORGANISATION", None)
+ZENDESK_ORGANIZATION = os.environ.get("ZENDESK_ORGANIZATION", None)
 ZENDESK_USER_TAGS = os.environ.get("ZENDESK_USER_TAGS", None)
 
-SENTRY_DSN = os.environ.get('SENTRY_DSN', None)
-KMS_PREFIX = os.environ.get('KMS_PREFIX', 'kms+base64:')
+SENTRY_DSN = os.environ.get("SENTRY_DSN", None)
+KMS_PREFIX = os.environ.get("KMS_PREFIX", "kms+base64:")
 
 # Decrypt Token encrypted in kms + b64 encoded
-if isinstance(ZENDESK_OAUTH_TOKEN, (str, bytes)) and ZENDESK_OAUTH_TOKEN.startswith(KMS_PREFIX):
-    ENCRYPTED_OAUTH_TOKEN = ZENDESK_OAUTH_TOKEN[len(KMS_PREFIX):]
-    ZENDESK_OAUTH_TOKEN = boto3.client('kms') \
-                          .decrypt(CiphertextBlob=b64decode(ENCRYPTED_OAUTH_TOKEN))['Plaintext'] \
-                          .decode('utf-8')
+if isinstance(ZENDESK_OAUTH_TOKEN, (str, bytes)) and ZENDESK_OAUTH_TOKEN.startswith(
+    KMS_PREFIX
+):
+    ENCRYPTED_OAUTH_TOKEN = ZENDESK_OAUTH_TOKEN[len(KMS_PREFIX) :]
+    ZENDESK_OAUTH_TOKEN = (
+        boto3.client("kms")
+        .decrypt(CiphertextBlob=b64decode(ENCRYPTED_OAUTH_TOKEN))["Plaintext"]
+        .decode("utf-8")
+    )
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Sentry using the Logging Integration
-sentry_logging = LoggingIntegration(
-    level=logging.INFO,
-    event_level=logging.ERROR
-)
+sentry_logging = LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
 
 sentry_sdk.init(
     dsn=SENTRY_DSN,
@@ -47,56 +46,89 @@ sentry_sdk.init(
 )
 
 zenpy_client = Zenpy(subdomain=ZENDESK_SUBDOMAIN, oauth_token=ZENDESK_OAUTH_TOKEN)
+zenpy_client.disable_caching()
 
-def get_existing_ticket(client, requester_name, tags):
-    requesters = client.search(requester_name, type="user")
 
-    for requester in requesters:
-        requester_tickets = zenpy_client.search(type="ticket", requester=requester.id)
+def get_existing_ticket(client, user, tags):
+    tickets = client.search(type="ticket", requester=user.id)
 
-        for ticket in requester_tickets:
-            tags.sort()
-            ticket_tags = [tag for tag in ticket.tags if tag.startswith("cw:")]
-            ticket_tags.sort()
+    for ticket in tickets:
+        tags.sort()
+        ticket_tags = [tag for tag in ticket.tags if tag.startswith("cw:")]
+        ticket_tags.sort()
 
-            if len(set(tags).intersection(set(ticket_tags))) == len(set(tags)) and ticket.status != "solved":
-                return ticket
+        if (
+            len(set(tags).intersection(set(ticket_tags))) == len(set(tags))
+            and ticket.status != "solved"
+        ):
+            return ticket
 
     return None
 
-def get_organisation_id(client, organisation_name):
-    if organisation_name is not None:
-        organizations = client.search(organisation_name, type="organization")
+
+def get_user(client, requester_name, organization):
+    logger.info(f"Looking for user {requester_name}")
+
+    users = client.search(requester_name, type="user")
+    for user in users:
+        if organization is not None:
+            if user.organization_id == organization.id:
+                logger.info(f"Found existing user #{user.id}")
+                return user
+        else:
+            return user
+
+    user_properties = {"name": requester_name}
+
+    if organization is not None:
+        user_properties["organization_id"] = organization.id
+
+    user = User(**user_properties)
+    logger.info(f"Created new user #{user.id}")
+    return user
+
+
+def get_organization(client, organization_name):
+    logger.info(f"Looking for organization {organization_name}")
+
+    if organization_name is not None:
+        organizations = client.search(organization_name, type="organization")
 
         for organization in organizations:
-            return organization.id
+            logger.info(f"Found organization #{organization.id}")
+            return organization
 
     return None
 
+
 def lambda_handler(event, context):
-    message = json.loads(event['Records'][0]['Sns']['Message'])
+    message = json.loads(event["Records"][0]["Sns"]["Message"])
 
-    alarm_name = message['AlarmName']
+    alarm_name = message["AlarmName"]
 
-    if re.match('^\w*\|', alarm_name) is not None:
-        alarm_severity = alarm_name.split('|')[0]
+    if re.match("^\w*\|", alarm_name) is not None:
+        alarm_severity = alarm_name.split("|")[0]
     else:
-        alarm_severity = alarm_name.split('-')[0]
+        alarm_severity = alarm_name.split("-")[0]
 
     logger.info(f"Alarm {alarm_name} - Severity: {alarm_severity}")
 
-    new_state = message['NewStateValue']
+    new_state = message["NewStateValue"]
 
-    alarm_description = message['AlarmDescription']
-    if 'Namespace' in message['Trigger']:
-        namespace = message['Trigger']['Namespace']
+    alarm_description = message["AlarmDescription"]
+    if "Namespace" in message["Trigger"]:
+        namespace = message["Trigger"]["Namespace"]
     else:
-        namespace = message['Trigger']['Metrics'][0]['MetricStat']['Metric']['Namespace']
-    if 'MetricName' in message['Trigger']:
-        metric_name = message['Trigger']['MetricName']
+        namespace = message["Trigger"]["Metrics"][0]["MetricStat"]["Metric"][
+            "Namespace"
+        ]
+    if "MetricName" in message["Trigger"]:
+        metric_name = message["Trigger"]["MetricName"]
     else:
-        metric_name = message['Trigger']['Metrics'][0]['MetricStat']['Metric']['MetricName']
-    reason = message['NewStateReason']
+        metric_name = message["Trigger"]["Metrics"][0]["MetricStat"]["Metric"][
+            "MetricName"
+        ]
+    reason = message["NewStateReason"]
     region = message["Region"]
     accountId = message["AWSAccountId"]
 
@@ -112,14 +144,20 @@ def lambda_handler(event, context):
         f"cw:accountid:{accountId}",
     ]
 
-    existing_ticket = get_existing_ticket(zenpy_client, ZENDESK_ALARM_NAME, tags)
+    organization = get_organization(
+        client=zenpy_client, organization_name=ZENDESK_ORGANIZATION
+    )
+    user = get_user(
+        client=zenpy_client,
+        requester_name=ZENDESK_ALARM_NAME,
+        organization=organization,
+    )
+
+    existing_ticket = get_existing_ticket(zenpy_client, user, tags)
     if existing_ticket is not None:
 
-        logger.info(f"adding state change comment to ticket #{existing_ticket.id}")
-        comment=(
-            f"Alarm has changed state to {new_state}\n"
-            f"Reason: {reason}\n"
-        )
+        logger.info(f"Adding state change comment to ticket #{existing_ticket.id}")
+        comment = f"Alarm has changed state to {new_state}\n" f"Reason: {reason}\n"
 
         ticket = zenpy_client.tickets(id=existing_ticket.id)
         ticket.comment = Comment(body=comment, author_id=ticket.requester_id)
@@ -127,7 +165,7 @@ def lambda_handler(event, context):
 
     if existing_ticket is None:
 
-        logger.info(f"creating new ticket for alarm {alarm_name}")
+        logger.info(f"Creating new ticket for alarm {alarm_name}")
         description = (
             f"An AWS CloudWatch Alarm has changed state to {new_state}\n"
             "\n"
@@ -143,30 +181,17 @@ def lambda_handler(event, context):
         )
 
         if ZENDESK_USER_TAGS is not None:
-            tags.append([ tag.lower() for tag in ZENDESK_USER_TAGS.split(" ")])
-
-
-        user_properties = {
-            "name" : ZENDESK_ALARM_NAME
-        }
-
-
-        organization_id = get_organisation_id(zenpy_client, ZENDESK_ORGANISATION)
-
-        if organization_id is not None:
-            user_properties["organization_id"] = organization_id
-
-        user = User(**user_properties)
+            tags.append([tag.lower() for tag in ZENDESK_USER_TAGS.split(" ")])
 
         ticket_content = {
-            "subject" : f"AWS Alarm - {alarm_name}",
-            "description" : description,
-            "requester": user,
-            "tags" : tags
+            "subject": f"AWS Alarm - {alarm_name}",
+            "description": description,
+            "requester_id": user.id,
+            "tags": tags,
         }
 
-        if organization_id is not None:
-            ticket_content["organization_id"] = organization_id
+        if organization is not None:
+            ticket_content["organization_id"] = organization.id
 
         ticket_audit = zenpy_client.tickets.create(Ticket(**ticket_content))
-        logger.info(f"created new ticket #{ticket_audit.ticket.id}")
+        logger.info(f"Created new ticket #{ticket_audit.ticket.id}")
