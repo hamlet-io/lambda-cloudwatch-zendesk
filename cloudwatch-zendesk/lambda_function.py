@@ -69,7 +69,7 @@ def get_existing_ticket(client, user, tags):
 def get_user(client, requester_name, organization):
     logger.info(f"Looking for user {requester_name}")
 
-    users = client.search(requester_name, type="user")
+    users = client.users.search(requester_name)
     for user in users:
         if organization is not None:
             if user.organization_id == organization.id:
@@ -83,7 +83,7 @@ def get_user(client, requester_name, organization):
     if organization is not None:
         user_properties["organization_id"] = organization.id
 
-    user = User(**user_properties)
+    user = client.users.create(User(**user_properties))
     logger.info(f"Created new user #{user.id}")
     return user
 
